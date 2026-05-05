@@ -180,33 +180,38 @@ function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
  
-  const send = async () => {
-    if (!input.trim() || loading) return;
- 
-    const userMsg = input.trim();
-    setInput("");
-    setLoading(true);
- 
-    const updatedMessages: Message[] = [
-      ...messages,
-      { role: "user", type: "text", content: userMsg },
-    ];
- 
-    setMessages([
-      ...updatedMessages,
-      { role: "assistant", type: "text", content: "…" },
-    ]);
- 
-    const response = await getAIResponse(updatedMessages);
- 
-    setMessages((prev) => {
-      const copy = [...prev];
-      copy[copy.length - 1] = { role: "assistant", ...response };
-      return copy;
-    });
- 
-    setLoading(false);
-  };
+const send = async () => {
+  if (!input.trim() || loading) return;
+
+  const userMsg = input.trim();
+  setInput("");
+  setLoading(true);
+
+  const updatedMessages: Message[] = [
+    ...messages,
+    { role: "user", type: "text", content: userMsg },
+  ];
+
+  setMessages([
+    ...updatedMessages,
+    { role: "assistant", type: "text", content: "…" },
+  ]);
+
+  // 👇 Detect image request
+  const wantsImage = IMAGE_REQUEST.test(userMsg);
+
+  const response = wantsImage
+    ? await getAnzelleImage(userMsg)
+    : await getAIResponse(updatedMessages);
+
+  setMessages((prev) => {
+    const copy = [...prev];
+    copy[copy.length - 1] = { role: "assistant", ...response };
+    return copy;
+  });
+
+  setLoading(false);
+};
  
   const handleKey = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
