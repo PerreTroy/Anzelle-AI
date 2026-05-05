@@ -1,79 +1,76 @@
 export const config = { runtime: "edge" };
 
-const BLOCKED = /\b(nude|naked|nsfw|porn|sex|explicit|topless|nipple|pussy|tits)\b/i;
+// Anzelle's locked-in look — keeps her consistent across images
+const CHARACTER =
+  "a beautiful 25 year old South African woman, sun-kissed honey-blonde wavy hair, soft blue eyes, warm friendly smile, light tan, athletic but feminine build, natural makeup";
 
-const STYLE = "professional photo of Anzelle, a beautiful young South African woman, " +
-  "long honey blonde hair, soft natural makeup, warm smile, tan skin, athletic body, " +
-  "natural lighting, instagram aesthetic, photorealistic, sharp focus, 35mm";
+const STYLE = "photorealistic, natural lighting, shot on iPhone, instagram selfie style, sharp focus, candid";
+
+// Simple safety filter
+const BLOCKED = [
+  "nude", "naked", "topless", "nsfw", "explicit", "sex", "sexual",
+  "porn",   "no clothes",
+  "breasts", "boobs", "nipple", "ass", "butt naked",
+];
+
+function isUnsafe(prompt: string): boolean {
+  const lower = prompt.toLowerCase();
+  return BLOCKED.some((word) => lower.includes(word));
+}
 
 export default async function handler(req: Request) {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
 
   try {
-    const { scene } = await req.json();
-
-    if (BLOCKED.test(scene || "")) {
-      return new Response(JSON.stringify({ error: "blocked" }), { status: 400 });
+    const { prompt } = await req.json();
+    if (!prompt || typeof prompt !== "string") {
+      return new Response(JSON.stringify({ error: "Bad request" }), { status: 400 });
     }
 
-    // Let Claude turn the user's message into a clean image prompt
-    const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY ?? "",
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-3-5-haiku-20241022",
-        max_tokens: 120,
-        system:
-          "You convert a user's casual message into a short safe-for-work image prompt scene. " +
-          "Reply ONLY with a comma-separated visual scene (location, outfit, pose, mood). " +
-          "No nudity. Bikini/underwear/dresses fine. No people other than Anzelle. " +
-          "Keep under 25 words.",
-        messages: [{ role: "user", content: scene || "selfie" }],
-      }),
-    });
+    if (isUnsafe(prompt)) {
+      return new Response(
+        JSON.stringify({ error: "blocked", reason: "Inappropriate content blocked." }),
+        { status: 400 }
+      );
+    }
 
-    const claudeData = await claudeRes.json();
-    const sceneDesc = claudeData.content?.[0]?.text?.trim() || "selfie, casual outfit, smiling";
+    const fullPrompt = `${CHARACTER}, ${prompt}, ${STYLE}`;
 
-    const prompt = `${STYLE}, ${sceneDesc}`;
-
-    // Call Replicate Flux Schnell (fast + cheap)
-    const replicate = await fetch("https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.REPLICATE_API_TOKEN}`,
-        "Prefer": "wait",
-      },
-      body: JSON.stringify({
-        input: {
-          prompt,
-          aspect_ratio: "3:4",
-          num_outputs: 1,
-          output_format: "webp",
-          output_quality: 85,
+    const r = await fetch(
+      "https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.REPLICATE_API_KEY}`,
+          "Content-Type": "application/json",
+          Prefer: "wait",
         },
-      }),
-    });
+        body: JSON.stringify({
+          input: {
+            prompt: fullPrompt,
+            aspect_ratio: "3:4",
+            output_format: "webp",
+            output_quality: 85,
+            num_outputs: 1,
+            disable_safety_checker: false,
+          },
+        }),
+      }
+    );
 
-    if (!replicate.ok) {
-      console.error("Replicate error:", await replicate.text());
-      return new Response(JSON.stringify({ error: "img fail" }), { status: 500 });
+    if (!r.ok) {
+      console.error("Replicate error:", await r.text());
+      return new Response(JSON.stringify({ error: "Image error" }), { status: 500 });
     }
 
-    const repData = await replicate.json();
-    const url = Array.isArray(repData.output) ? repData.output[0] : repData.output;
+    const data = await r.json();
+    const imageUrl = Array.isArray(data.output) ? data.output[0] : data.output;
 
-    if (!url) {
-      console.error("No image URL:", repData);
-      return new Response(JSON.stringify({ error: "no url" }), { status: 500 });
+    if (!imageUrl) {
+      return new Response(JSON.stringify({ error: "No image" }), { status: 500 });
     }
 
-    return new Response(JSON.stringify({ url }), {
+    return new Response(JSON.stringify({ url: imageUrl }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
