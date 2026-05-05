@@ -78,8 +78,9 @@ interface Message {
 // ============================================================
 // API
 // ============================================================
-const IMAGE_REQUEST = /\b(pic|picture|photo|photos|pics|selfie|show me|send me|let me see|snap)\b/i;
-
+// ============================================================
+// API
+// ============================================================
 const IMG_COUNT = "anzelle_img_count";
 const IMG_DATE = "anzelle_img_date";
 const MAX_IMG_PER_DAY = 5;
@@ -96,46 +97,6 @@ function imgCountToday(): number {
 
 function incImgCount() {
   localStorage.setItem(IMG_COUNT, String(imgCountToday() + 1));
-}
-
-async function getAnzelleImage(
-  userMsg: string
-): Promise<{ type: "text" | "image"; content: string }> {
-  if (imgCountToday() >= MAX_IMG_PER_DAY) {
-    return {
-      type: "text",
-      content: "I've sent you enough pics for today 😉 catch me tomorrow babe",
-    };
-  }
-
-  try {
-    const res = await fetch("/api/image", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scene: userMsg }),
-    });
-
-    if (res.status === 400) {
-      const data = await res.json().catch(() => ({}));
-      if (data.error === "blocked") {
-        return {
-          type: "text",
-          content: "Hayi no boet 😅 not that kind of girl. Try something else?",
-        };
-      }
-    }
-
-    if (!res.ok) throw new Error("img fail");
-
-    const data = await res.json();
-    incImgCount();
-    return { type: "image", content: data.url };
-  } catch {
-    return {
-      type: "text",
-      content: "My camera's being moerse moody right now 😩 ask me again in a bit",
-    };
-  }
 }
 
 async function getAIResponse(
@@ -165,6 +126,7 @@ async function getAIResponse(
 }
 
 async function generateImage(prompt: string): Promise<string | null> {
+  if (imgCountToday() >= MAX_IMG_PER_DAY) return null;
   try {
     const res = await fetch("/api/image", {
       method: "POST",
@@ -173,12 +135,12 @@ async function generateImage(prompt: string): Promise<string | null> {
     });
     if (!res.ok) return null;
     const data = await res.json();
+    if (data.url) incImgCount();
     return data.url ?? null;
   } catch {
     return null;
   }
 }
-
 // ============================================================
 // CHAT UI
 // ============================================================
