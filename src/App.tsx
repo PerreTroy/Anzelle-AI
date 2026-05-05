@@ -140,7 +140,7 @@ async function getAnzelleImage(
 
 async function getAIResponse(
   messages: Message[]
-): Promise<{ type: "text" | "image"; content: string }> {
+): Promise<{ reply: string; imagePrompt: string | null }> {
   try {
     const context = messages.slice(-12).map(({ role, content }) => ({
       role,
@@ -155,15 +155,27 @@ async function getAIResponse(
 
     if (!res.ok) throw new Error("Server error");
     const data = await res.json();
-    return {
-      type: data.type === "image" ? "image" : "text",
-      content: data.reply,
-    };
+    return { reply: data.reply, imagePrompt: data.imagePrompt ?? null };
   } catch {
     return {
-      type: "text",
-      content: "Mmm I'm still here with you 😏 tell me more…",
+      reply: "Mmm I'm still here with you 😏 tell me more…",
+      imagePrompt: null,
     };
+  }
+}
+
+async function generateImage(prompt: string): Promise<string | null> {
+  try {
+    const res = await fetch("/api/image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.url ?? null;
+  } catch {
+    return null;
   }
 }
 
@@ -182,6 +194,7 @@ function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
  
+
 const send = async () => {
   if (!input.trim() || loading) return;
 
@@ -199,21 +212,35 @@ const send = async () => {
     { role: "assistant", type: "text", content: "…" },
   ]);
 
-  // 👇 Detect image request
-  const wantsImage = IMAGE_REQUEST.test(userMsg);
-
-  const response = wantsImage
-    ? await getAnzelleImage(userMsg)
-    : await getAIResponse(updatedMessages);
+  const { reply, imagePrompt } = await getAIResponse(updatedMessages);
 
   setMessages((prev) => {
     const copy = [...prev];
-    copy[copy.length - 1] = { role: "assistant", ...response };
+    copy[copy.length - 1] = { role: "assistant", type: "text", content: reply };
     return copy;
   });
 
+  // If she wants to send a pic, generate it
+  if (imagePrompt) {
+    setMessages((prev) => [
+      ...prev,
+      { role: "assistant", type: "text", content: "📸 sending you something…" },
+    ]);
+
+    const url = await generateImage(imagePrompt);
+
+    setMessages((prev) => {
+      const copy = [...prev];
+      copy[copy.length - 1] = url
+        ? { role: "assistant", type: "image", content: url }
+        : { role: "assistant", type: "text", content: "Mmm couldn't snap one right now 😅" };
+      return copy;
+    });
+  }
+
   setLoading(false);
 };
+ 
  
   const handleKey = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
