@@ -71,10 +71,60 @@ interface Message {
 // ============================================================
 // API — single secure backend route (API key stays on server)
 // ============================================================
+// ============================================================
+// Detect image requests
+// ============================================================
+const IMAGE_TRIGGERS = /\b(pic|picture|photo|selfie|image|show me|send.*pic|snap)\b/i;
+
+async function getImage(prompt: string): Promise<string | null> {
+  try {
+    const res = await fetch("/api/image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.url ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ============================================================
+// API
+// ============================================================
 async function getAIResponse(
   messages: Message[]
 ): Promise<{ type: "text" | "image"; content: string }> {
   try {
+    const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+    const wantsImage = lastUserMsg && IMAGE_TRIGGERS.test(lastUserMsg.content);
+
+    if (wantsImage) {
+      // Daily image limit (5/day)
+      const today = new Date().toDateString();
+      const key = "anzelle_img_" + today;
+      const count = Number(localStorage.getItem(key) ?? "0");
+      if (count >= 5) {
+        return {
+          type: "text",
+          content: "Mmm I've sent you enough pics today babe 😘 ask me again tomorrow",
+        };
+      }
+
+      const imgPrompt = lastUserMsg!.content;
+      const url = await getImage(imgPrompt);
+      if (url) {
+        localStorage.setItem(key, String(count + 1));
+        return { type: "image", content: url };
+      }
+      return {
+        type: "text",
+        content: "Eish, my camera is acting up 😅 try again in a sec?",
+      };
+    }
+
     const context = messages.slice(-12).map(({ role, content }) => ({
       role,
       content,
@@ -88,10 +138,7 @@ async function getAIResponse(
 
     if (!res.ok) throw new Error("Server error");
     const data = await res.json();
-    return {
-      type: data.type === "image" ? "image" : "text",
-      content: data.reply,
-    };
+    return { type: "text", content: data.reply };
   } catch {
     return {
       type: "text",
