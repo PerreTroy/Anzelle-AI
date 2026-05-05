@@ -74,57 +74,74 @@ interface Message {
 // ============================================================
 // Detect image requests
 // ============================================================
-const IMAGE_TRIGGERS = /\b(pic|picture|photo|selfie|image|show me|send.*pic|snap)\b/i;
-
-async function getImage(prompt: string): Promise<string | null> {
-  try {
-    const res = await fetch("/api/image", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.url ?? null;
-  } catch {
-    return null;
-  }
-}
 
 // ============================================================
 // API
 // ============================================================
+const IMAGE_REQUEST = /\b(pic|picture|photo|photos|pics|selfie|show me|send me|let me see|snap)\b/i;
+
+const IMG_COUNT = "anzelle_img_count";
+const IMG_DATE = "anzelle_img_date";
+const MAX_IMG_PER_DAY = 5;
+
+function imgCountToday(): number {
+  const today = new Date().toDateString();
+  if (localStorage.getItem(IMG_DATE) !== today) {
+    localStorage.setItem(IMG_DATE, today);
+    localStorage.setItem(IMG_COUNT, "0");
+    return 0;
+  }
+  return Number(localStorage.getItem(IMG_COUNT) || "0");
+}
+
+function incImgCount() {
+  localStorage.setItem(IMG_COUNT, String(imgCountToday() + 1));
+}
+
+async function getAnzelleImage(
+  userMsg: string
+): Promise<{ type: "text" | "image"; content: string }> {
+  if (imgCountToday() >= MAX_IMG_PER_DAY) {
+    return {
+      type: "text",
+      content: "I've sent you enough pics for today 😉 catch me tomorrow babe",
+    };
+  }
+
+  try {
+    const res = await fetch("/api/image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scene: userMsg }),
+    });
+
+    if (res.status === 400) {
+      const data = await res.json().catch(() => ({}));
+      if (data.error === "blocked") {
+        return {
+          type: "text",
+          content: "Hayi no boet 😅 not that kind of girl. Try something else?",
+        };
+      }
+    }
+
+    if (!res.ok) throw new Error("img fail");
+
+    const data = await res.json();
+    incImgCount();
+    return { type: "image", content: data.url };
+  } catch {
+    return {
+      type: "text",
+      content: "My camera's being moerse moody right now 😩 ask me again in a bit",
+    };
+  }
+}
+
 async function getAIResponse(
   messages: Message[]
 ): Promise<{ type: "text" | "image"; content: string }> {
   try {
-    const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
-    const wantsImage = lastUserMsg && IMAGE_TRIGGERS.test(lastUserMsg.content);
-
-    if (wantsImage) {
-      // Daily image limit (5/day)
-      const today = new Date().toDateString();
-      const key = "anzelle_img_" + today;
-      const count = Number(localStorage.getItem(key) ?? "0");
-      if (count >= 5) {
-        return {
-          type: "text",
-          content: "Mmm I've sent you enough pics today babe 😘 ask me again tomorrow",
-        };
-      }
-
-      const imgPrompt = lastUserMsg!.content;
-      const url = await getImage(imgPrompt);
-      if (url) {
-        localStorage.setItem(key, String(count + 1));
-        return { type: "image", content: url };
-      }
-      return {
-        type: "text",
-        content: "Eish, my camera is acting up 😅 try again in a sec?",
-      };
-    }
-
     const context = messages.slice(-12).map(({ role, content }) => ({
       role,
       content,
@@ -146,6 +163,8 @@ async function getAIResponse(
     };
   }
 }
+
+
 // ============================================================
 // CHAT UI
 // ============================================================
