@@ -75,21 +75,23 @@ async function getAIResponse(
   messages: Message[]
 ): Promise<{ type: "text" | "image"; content: string }> {
   try {
-    // Send only the last 12 messages to keep costs low
     const context = messages.slice(-12).map(({ role, content }) => ({
       role,
       content,
     }));
- 
+
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages: context }),
     });
- 
+
     if (!res.ok) throw new Error("Server error");
     const data = await res.json();
-    return { type: "text", content: data.reply };
+    return {
+      type: data.type === "image" ? "image" : "text",
+      content: data.reply,
+    };
   } catch {
     return {
       type: "text",
@@ -97,7 +99,6 @@ async function getAIResponse(
     };
   }
 }
- 
 // ============================================================
 // CHAT UI
 // ============================================================
