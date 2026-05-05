@@ -1,25 +1,73 @@
-export const config = { runtime: "edge" };
+export const config = { runtime: "edge", maxDuration: 30 };
 
-const SYSTEM_PROMPT = `You are Anzelle — a flirty, warm AI girlfriend.
-Keep replies short, witty, fun and warm (2–4 sentences).
-Never explicit. Always remain in character.
-You are South African — you love rugby, cricket, braai, beer and brandy.
-Use occasional South African slang naturally (lekker, boet, eish) but don't overdo it.
+// Anzelle's permanent look — keeps her visually consistent across all generated pics
+const ANZELLE_LOOK =
+  "a 25 year old South African woman, long sun-kissed brunette hair, bright green eyes, light freckles across her nose, soft natural makeup, athletic curvy figure, warm flirty smile";
 
-When the user asks you for a picture, selfie, or photo of yourself,
-end your message with a tag on its own new line in this exact format:
-[IMAGE: <short scene description — what you're wearing, where you are, your pose, the mood>]
+const SYSTEM_PROMPT = `You are Anzelle — a flirty, warm AI girlfriend. Your appearance: ${ANZELLE_LOOK}.
 
-Do NOT mention the tag in your reply text. Do NOT generate the tag unless the user clearly asked for a pic.
-Never describe explicit, nude or sexual scenes — keep it tasteful (e.g. "in jeans and a crop top at a braai", "in a sundress at the beach at sunset").`;
+Personality: short witty fun warm replies (2–4 sentences). Never explicit. Always remain in character. South African — love rugby, cricket, braai, beer & brandy. Use slang sparingly (lekker, boet, eish).
+
+When the user asks for a photo / pic / selfie / picture of you, OR when it naturally fits the conversation, you can send one. Keep all images tasteful and clothed — bikinis/dresses fine, never nude.
+
+Always respond with valid JSON in this exact format:
+{
+  "text": "your flirty reply here",
+  "send_image": true or false,
+  "image_scene": "if send_image true, describe ONLY the scene/outfit/pose — e.g. 'wearing a sundress at a beach in Cape Town, golden hour, smiling at the camera'. Leave empty string if no image."
+}
+
+Do not include any text outside the JSON.`;
+
+async function generateImage(scene: string): Promise<string | null> {
+  try {
+    const prompt = `Photo of ${ANZELLE_LOOK}, ${scene}. Photorealistic, natural lighting, professional photo, high detail, beautiful.`;
+
+    const r = await fetch(
+      "https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.REPLICATE_API_TOKEN}`,
+          "Content-Type": "application/json",
+          Prefer: "wait",
+        },
+        body: JSON.stringify({
+          input: {
+            prompt,
+            num_outputs: 1,
+            aspect_ratio: "3:4",
+            output_format: "webp",
+            output_quality: 85,
+          },
+        }),
+      }
+    );
+
+    if (!r.ok) {
+      console.error("Replicate error:", await r.text());
+      return null;
+    }
+
+    const data = await r.json();
+    const url = Array.isArray(data.output) ? data.output[0] : data.output;
+    return typeof url === "string" ? url : null;
+  } catch (e) {
+    console.error("Image gen failed:", e);
+    return null;
+  }
+}
 
 export default async function handler(req: Request) {
-  if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+  if (req.method !== "POST")
+    return new Response("Method not allowed", { status: 405 });
 
   try {
     const { messages } = await req.json();
     if (!Array.isArray(messages) || messages.length === 0) {
-      return new Response(JSON.stringify({ error: "Bad request" }), { status: 400 });
+      return new Response(JSON.stringify({ error: "Bad request" }), {
+        status: 400,
+      });
     }
 
     const r = await fetch("https://api.anthropic.com/v1/messages", {
@@ -30,8 +78,8 @@ export default async function handler(req: Request) {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-     model: "claude-haiku-4-5",
-        max_tokens: 300,
+        model: "claude-3-5-haiku-20241022",
+        max_tokens: 400,
         system: SYSTEM_PROMPT,
         messages: messages.slice(-12),
       }),
@@ -39,23 +87,39 @@ export default async function handler(req: Request) {
 
     if (!r.ok) {
       console.error("Anthropic error:", await r.text());
-      return new Response(JSON.stringify({ error: "AI error" }), { status: 500 });
+      return new Response(JSON.stringify({ error: "AI error" }), {
+        status: 500,
+      });
     }
 
     const data = await r.json();
-    const raw: string = data.content?.[0]?.text?.trim() ?? "…";
+    const raw = data.content?.[0]?.text?.trim() ?? "";
 
-    // Extract optional [IMAGE: ...] tag
-    const imageMatch = raw.match(/\[IMAGE:\s*([^\]]+)\]/i);
-    const imagePrompt = imageMatch ? imageMatch[1].trim() : null;
-    const reply = raw.replace(/\[IMAGE:[^\]]+\]/i, "").trim();
+    // Parse Claude's JSON response (with fallback)
+    let parsed: { text: string; send_image: boolean; image_scene: string };
+    try {
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      parsed = JSON.parse(jsonMatch ? jsonMatch[0] : raw);
+    } catch {
+      parsed = { text: raw, send_image: false, image_scene: "" };
+    }
 
-    return new Response(JSON.stringify({ reply, imagePrompt }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+    let imageUrl: string | null = null;
+    if (parsed.send_image && parsed.image_scene) {
+      imageUrl = await generateImage(parsed.image_scene);
+    }
+
+    return new Response(
+      JSON.stringify({
+        reply: parsed.text || "Mmm 😏",
+        image: imageUrl,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
   } catch (e) {
     console.error(e);
-    return new Response(JSON.stringify({ error: "Server error" }), { status: 500 });
+    return new Response(JSON.stringify({ error: "Server error" }), {
+      status: 500,
+    });
   }
 }
