@@ -41,7 +41,7 @@ export default async function handler(req: Request) {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${process.env.REPLICATE_API_KEY}`,
+          Authorization: `Bearer ${process.env.REPLICATE_API_TOKEN}`,
           "Content-Type": "application/json",
           Prefer: "wait",
         },
