@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
-import { createClient, Session, User } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
+import type { Session, User } from "@supabase/supabase-js";
 import avatarImg from "/anzelle_avatar.png";
 
 // ============================================================
