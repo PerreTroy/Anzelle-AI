@@ -1,15 +1,15 @@
 import { useState, useRef, useEffect } from "react";
 import avatarImg from "/anzelle_avatar.png";
- 
+
 // ============================================================
 // CONFIG
 // ============================================================
 const PAYFAST_URL = "https://www.payfast.co.za/eng/process";
- 
+
 const TOKEN = "anzelle_access";
 const TRIAL = "anzelle_trial";
 const TRIAL_TIME = 24 * 60 * 60 * 1000;
- 
+
 const PERSONA = {
   name: "Anzelle",
   tagline: "Flirty AI companion · Always here",
@@ -17,7 +17,7 @@ const PERSONA = {
   personality:
     "Flirty, warm AI girlfriend. Short witty, fun and warm replies (2–4 sentences). Never explicit. Always remain in character. Allow pictures of you to be generated. No nude pics but bikini and underwear pics are fine. You are South African so love sports like rugby and cricket, and braai and beer and brandy",
 };
- 
+
 // ============================================================
 // ACCESS
 // ============================================================
@@ -27,10 +27,10 @@ const allowed = () =>
     sessionStorage.getItem(TRIAL) &&
     Date.now() - Number(sessionStorage.getItem(TRIAL)) < TRIAL_TIME
   );
- 
+
 const grantAccess = () => sessionStorage.setItem(TOKEN, "1");
 const startTrial = () => sessionStorage.setItem(TRIAL, Date.now().toString());
- 
+
 // ============================================================
 // PAYFAST
 // ============================================================
@@ -38,14 +38,14 @@ function redirectToPayFast() {
   const form = document.createElement("form");
   form.method = "POST";
   form.action = PAYFAST_URL;
- 
+
   const fields: Record<string, string> = {
     merchant_id: "10898793",
     merchant_key: "0mpktjrcbh7mb",
     amount: "49.00",
     item_name: "Anzelle Subscription",
   };
- 
+
   Object.entries(fields).forEach(([k, v]) => {
     const i = document.createElement("input");
     i.type = "hidden";
@@ -53,12 +53,12 @@ function redirectToPayFast() {
     i.value = v;
     form.appendChild(i);
   });
- 
+
   document.body.appendChild(form);
   form.submit();
   document.body.removeChild(form);
 }
- 
+
 // ============================================================
 // TYPES
 // ============================================================
@@ -67,41 +67,15 @@ interface Message {
   type: "text" | "image";
   content: string;
 }
- 
-// ============================================================
-// API — single secure backend route (API key stays on server)
-// ============================================================
-// ============================================================
-// Detect image requests
-// ============================================================
 
 // ============================================================
-// API
+// API — chat.ts handles BOTH the reply AND image generation
+// Returns: { reply: string, image: string | null }
 // ============================================================
-// ============================================================
-// API
-// ============================================================
-const IMG_COUNT = "anzelle_img_count";
-const IMG_DATE = "anzelle_img_date";
-const MAX_IMG_PER_DAY = 5;
-
-function imgCountToday(): number {
-  const today = new Date().toDateString();
-  if (localStorage.getItem(IMG_DATE) !== today) {
-    localStorage.setItem(IMG_DATE, today);
-    localStorage.setItem(IMG_COUNT, "0");
-    return 0;
-  }
-  return Number(localStorage.getItem(IMG_COUNT) || "0");
-}
-
-function incImgCount() {
-  localStorage.setItem(IMG_COUNT, String(imgCountToday() + 1));
-}
-
-async function getAIResponse(
-  messages: Message[]
-): Promise<{ reply: string; imagePrompt: string | null }> {
+async function getAIResponse(messages: Message[]): Promise<{
+  reply: string;
+  image: string | null;
+}> {
   try {
     const context = messages.slice(-12).map(({ role, content }) => ({
       role,
@@ -116,31 +90,19 @@ async function getAIResponse(
 
     if (!res.ok) throw new Error("Server error");
     const data = await res.json();
-    return { reply: data.reply, imagePrompt: data.imagePrompt ?? null };
+
+    return {
+      reply: data.reply ?? "Mmm I'm still here with you 😏 tell me more…",
+      image: data.image ?? null,
+    };
   } catch {
     return {
       reply: "Mmm I'm still here with you 😏 tell me more…",
-      imagePrompt: null,
+      image: null,
     };
   }
 }
 
-async function generateImage(prompt: string): Promise<string | null> {
-  if (imgCountToday() >= MAX_IMG_PER_DAY) return null;
-  try {
-    const res = await fetch("/api/image", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data.url) incImgCount();
-    return data.url ?? null;
-  } catch {
-    return null;
-  }
-}
 // ============================================================
 // CHAT UI
 // ============================================================
@@ -151,66 +113,60 @@ function Chat() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
- 
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
- 
 
-const send = async () => {
-  if (!input.trim() || loading) return;
+  const send = async () => {
+    if (!input.trim() || loading) return;
 
-  const userMsg = input.trim();
-  setInput("");
-  setLoading(true);
+    const userMsg = input.trim();
+    setInput("");
+    setLoading(true);
 
-  const updatedMessages: Message[] = [
-    ...messages,
-    { role: "user", type: "text", content: userMsg },
-  ];
+    const updatedMessages: Message[] = [
+      ...messages,
+      { role: "user", type: "text", content: userMsg },
+    ];
 
-  setMessages([
-    ...updatedMessages,
-    { role: "assistant", type: "text", content: "…" },
-  ]);
-
-  const { reply, imagePrompt } = await getAIResponse(updatedMessages);
-
-  setMessages((prev) => {
-    const copy = [...prev];
-    copy[copy.length - 1] = { role: "assistant", type: "text", content: reply };
-    return copy;
-  });
-
-  // If she wants to send a pic, generate it
-  if (imagePrompt) {
-    setMessages((prev) => [
-      ...prev,
-      { role: "assistant", type: "text", content: "📸 sending you something…" },
+    // Show typing indicator
+    setMessages([
+      ...updatedMessages,
+      { role: "assistant", type: "text", content: "…" },
     ]);
 
-    const url = await generateImage(imagePrompt);
+    const { reply, image } = await getAIResponse(updatedMessages);
 
+    // Replace typing indicator with her text reply
     setMessages((prev) => {
       const copy = [...prev];
-      copy[copy.length - 1] = url
-        ? { role: "assistant", type: "image", content: url }
-        : { role: "assistant", type: "text", content: "Mmm couldn't snap one right now 😅" };
+      copy[copy.length - 1] = {
+        role: "assistant",
+        type: "text",
+        content: reply,
+      };
       return copy;
     });
-  }
 
-  setLoading(false);
-};
- 
- 
+    // If an image came back, append it as a separate bubble
+    if (image) {
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", type: "image", content: image },
+      ]);
+    }
+
+    setLoading(false);
+  };
+
   const handleKey = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       send();
     }
   };
- 
+
   return (
     <div style={styles.chat}>
       <div style={styles.header}>
@@ -221,7 +177,7 @@ const send = async () => {
         </div>
         <div style={styles.onlineDot} />
       </div>
- 
+
       <div style={styles.messages}>
         {messages.map((m, i) => (
           <div
@@ -235,7 +191,7 @@ const send = async () => {
             <div
               style={{
                 background: m.role === "user" ? "#7c3aed" : "#1e1b2e",
-                padding: 10,
+                padding: m.type === "image" ? 4 : 10,
                 borderRadius:
                   m.role === "user"
                     ? "14px 14px 4px 14px"
@@ -251,7 +207,7 @@ const send = async () => {
                 <img
                   src={m.content}
                   alt="Anzelle"
-                  style={{ width: "100%", borderRadius: 10 }}
+                  style={{ width: "100%", borderRadius: 10, display: "block" }}
                 />
               ) : (
                 m.content
@@ -261,7 +217,7 @@ const send = async () => {
         ))}
         <div ref={bottomRef} />
       </div>
- 
+
       <div style={styles.inputRow}>
         <input
           value={input}
@@ -285,7 +241,7 @@ const send = async () => {
     </div>
   );
 }
- 
+
 // ============================================================
 // PAYWALL
 // ============================================================
@@ -294,16 +250,16 @@ function Paywall({ unlock }: { unlock: () => void }) {
     <div style={styles.center}>
       <div style={styles.card}>
         <img src={avatarImg} style={styles.avatar} alt="Anzelle" />
- 
+
         <h2 style={{ color: "#fff", margin: "12px 0 4px" }}>Anzelle AI</h2>
         <p style={{ color: "#a78bfa", fontSize: 13, margin: "0 0 20px" }}>
           Your flirty AI companion 💜
         </p>
- 
+
         <button style={styles.primary} onClick={redirectToPayFast}>
           Subscribe R49/month
         </button>
- 
+
         <button
           style={styles.secondary}
           onClick={() => {
@@ -313,7 +269,7 @@ function Paywall({ unlock }: { unlock: () => void }) {
         >
           Try free 24h ✨
         </button>
- 
+
         <button
           style={styles.link}
           onClick={() => {
@@ -327,7 +283,7 @@ function Paywall({ unlock }: { unlock: () => void }) {
     </div>
   );
 }
- 
+
 // ============================================================
 // APP ROOT
 // ============================================================
@@ -335,7 +291,7 @@ export default function App() {
   const [ok, setOk] = useState(allowed());
   return ok ? <Chat /> : <Paywall unlock={() => setOk(true)} />;
 }
- 
+
 // ============================================================
 // STYLES
 // ============================================================
@@ -360,7 +316,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   avatar: { width: 90, height: 90, borderRadius: "50%" },
   avatarSmall: { width: 40, height: 40, borderRadius: "50%", flexShrink: 0 },
- 
+
   chat: {
     height: "100vh",
     display: "flex",
@@ -446,4 +402,3 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
   },
 };
- 
